@@ -1,0 +1,131 @@
+:root {
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft Yahei", sans-serif;
+  color: #1f2937;
+  background: #f5f7fb;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 24px auto 48px;
+  padding: 0 16px;
+}
+
+header h1 {
+  margin: 0 0 8px;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.row label {
+  min-width: 88px;
+  font-weight: 600;
+}
+
+input[type="text"],
+input:not([type]) {
+  flex: 1;
+  min-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+}
+
+button {
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+
+.table-wrap {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+thead th {
+  text-align: left;
+  background: #f9fafb;
+  padding: 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+tbody td {
+  padding: 10px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.badge.pending { background: #fef3c7; }
+.badge.queued { background: #e0f2fe; }
+.badge.sending { background: #fde68a; }
+.badge.sent { background: #dcfce7; }
+.badge.failed { background: #fee2e2; }
+.badge.skipped { background: #e5e7eb; }
+
+.muted {
+  color: #6b7280;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.toast {
+  margin-top: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 8px 10px;
+  border-radius: 8px;
+}

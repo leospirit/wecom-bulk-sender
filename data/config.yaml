@@ -1,0 +1,6 @@
+corp_id: ww7f8353a79aaacd29
+agent_id: '1000035'
+secret: 9vFDpwyEanYm7_-ap97oVS3-KH-if_dSqNmbgt-7lH8
+root_path: /data/inbox
+rate_limit_per_sec: 1.0
+max_concurrency: 2

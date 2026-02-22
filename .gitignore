@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+web/node_modules/
+api/__pycache__/
+api/.pytest_cache/
+*.pyc
+/data/app.db
+/data/contacts.xlsx
+/data/inbox/
+/data/*.db
+.env
