@@ -43,6 +43,12 @@ docker compose up --build
 
 6. 打开前端：`http://localhost:5173`
 
+## Windows 一键启动
+
+双击 `windows-start.bat` 即可：
+- 自动检查 Docker Desktop 是否安装并运行
+- 启动容器并打开 UI
+
 ## 使用流程
 
 1. 上传通讯录 Excel（可选，如果已放到 `data/contacts.xlsx`）
