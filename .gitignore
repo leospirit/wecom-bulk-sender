@@ -8,4 +8,6 @@ api/.pytest_cache/
 /data/contacts.xlsx
 /data/inbox/
 /data/*.db
+/data/config.yaml
+.venv/
 .env
