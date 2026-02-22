@@ -49,6 +49,8 @@ docker compose up --build
 - 自动检查 Docker Desktop 是否安装并运行
 - 启动容器并打开 UI
 
+停止服务：双击 `windows-stop.bat`
+
 ## 使用流程
 
 1. 上传通讯录 Excel（可选，如果已放到 `data/contacts.xlsx`）
