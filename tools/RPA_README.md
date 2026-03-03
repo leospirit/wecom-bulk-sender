@@ -35,6 +35,12 @@ python tools\wecom_rpa_sender.py --tasks-csv tools\rpa_tasks.sample.csv
 
 ## 5) UI run (recommended)
 
+Fastest way on a new Windows PC:
+
+- double click `..\one-click-rpa.bat`
+
+This will auto-create venv, install dependencies, and launch RPA UI.
+
 Double click:
 
 - `tools\run-rpa-ui.bat`

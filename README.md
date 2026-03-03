@@ -51,6 +51,29 @@ docker compose up --build
 
 停止服务：双击 `windows-stop.bat`
 
+## RPA 一键安装与启动（其他电脑）
+
+如果你要在另一台 Windows 电脑快速跑本机 RPA（企业微信桌面自动粘贴/发送）：
+
+1. 安装 Git 与 Python 3.11+。
+2. 克隆仓库：
+
+```powershell
+git clone https://github.com/leospirit/wecom-bulk-sender.git
+cd wecom-bulk-sender
+```
+
+3. 双击运行：
+
+```text
+one-click-rpa.bat
+```
+
+脚本会自动：
+- 创建 `.venv_rpa`
+- 安装 `tools/rpa-requirements.txt`
+- 启动 `tools/wecom_rpa_gui.py`
+
 ## 使用流程
 
 1. 上传通讯录 Excel（可选，如果已放到 `data/contacts.xlsx`）
