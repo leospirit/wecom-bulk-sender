@@ -108,6 +108,30 @@ def set_all_pending_to_queued() -> int:
         return cur.rowcount
 
 
+def delete_task(task_id: int) -> int:
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+        conn.commit()
+        return cur.rowcount
+
+
+def delete_tasks(ids: list[int]) -> int:
+    if not ids:
+        return 0
+    placeholders = ",".join(["?"] * len(ids))
+    with _conn() as conn:
+        cur = conn.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", tuple(ids))
+        conn.commit()
+        return cur.rowcount
+
+
+def clear_tasks() -> int:
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM tasks")
+        conn.commit()
+        return cur.rowcount
+
+
 def status_counts() -> dict:
     with _conn() as conn:
         rows = conn.execute(

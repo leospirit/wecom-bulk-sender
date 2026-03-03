@@ -1,13 +1,14 @@
-import React from "react";
+﻿import React from "react";
 import type { Task } from "../api";
 
 type Props = {
   tasks: Task[];
   selected: Set<number>;
   onToggle: (id: number) => void;
+  onDelete: (id: number) => void;
 };
 
-export default function TaskTable({ tasks, selected, onToggle }: Props) {
+export default function TaskTable({ tasks, selected, onToggle, onDelete }: Props) {
   return (
     <div className="table-wrap">
       <table>
@@ -20,6 +21,7 @@ export default function TaskTable({ tasks, selected, onToggle }: Props) {
             <th>UserId</th>
             <th>状态</th>
             <th>原因</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -40,6 +42,9 @@ export default function TaskTable({ tasks, selected, onToggle }: Props) {
                 <span className={`badge ${t.status}`}>{t.status}</span>
               </td>
               <td className="muted">{t.error ?? ""}</td>
+              <td>
+                <button onClick={() => onDelete(t.id)}>删除</button>
+              </td>
             </tr>
           ))}
         </tbody>
