@@ -1,5 +1,13 @@
 # 企业微信批量图片发送
 
+## 一键安装（Windows）
+
+```powershell
+git clone https://github.com/leospirit/wecom-bulk-sender.git
+cd wecom-bulk-sender
+one-click-rpa.bat
+```
+
 功能：
 - 递归扫描本地目录图片
 - 文件名开头连续中文作为学生姓名
