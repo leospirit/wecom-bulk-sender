@@ -20,6 +20,18 @@ Optional:
 - `student_name`
 - `search_keyword` (用于搜索会话，默认等于 `parent_name`)
 - `confirm_keyword` (用于发前校验当前会话，默认等于 `parent_name`)
+- `message_text` (先发送图片，再发送文字；`--paste-only` 演练时为“文字+图片都只粘贴不发送”)
+
+如果你要把口语评测的“弱读音素+视频链接”自动写入任务 CSV，可以直接运行：
+
+```powershell
+python tools\build_rpa_tasks_from_score.py `
+  --input-csv tools\rpa_tasks.real.csv `
+  --output-csv tools\rpa_tasks.with-message.csv `
+  --score-api-base http://127.0.0.1:8000
+```
+
+然后把 `--tasks-csv` 指向 `tools\rpa_tasks.with-message.csv` 运行 RPA。
 
 ## 3) Dry run first
 
@@ -82,6 +94,11 @@ React UI includes:
 - live log tail + command preview
 - result counters (including `pasted_unverified`)
 
+If `npm/vite` fails with `spawn EPERM`, use Lite Web (no Node build):
+
+- `tools\run-rpa-lite-web.bat`
+- open `http://localhost:8000/rpa-lite/`
+
 ## Useful args
 
 - `--wecom-exe "C:\Program Files (x86)\WXWork\WXWork.exe"`
@@ -92,6 +109,7 @@ React UI includes:
 - `--log-file run-logs\rpa-sender.log`
 - `--debug-chat-text`
 - `--no-chat-verify`
+- `--skip-text-message` (即使 CSV 里有 `message_text` 也不发送)
 - `--paste-only` (只粘贴到输入框，不发送)
 - `--max-retries 2` (每条失败自动重试次数)
 - `--retry-delay-sec 1.0` (重试间隔)

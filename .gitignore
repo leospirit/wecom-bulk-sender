@@ -10,4 +10,11 @@ api/.pytest_cache/
 /data/*.db
 /data/config.yaml
 .venv/
+.venv_rpa/
+.venv_run/
 .env
+.tmp/
+run-logs/
+data/contacts_real.xlsx
+tools/rpa_tasks.real.csv
+tools/rpa_tasks.with-message.csv

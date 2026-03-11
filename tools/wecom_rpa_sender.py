@@ -35,6 +35,7 @@ class Task:
     student_name: str = ""
     search_keyword: str = ""
     confirm_keyword: str = ""
+    message_text: str = ""
 
 
 TUNE = {
@@ -77,6 +78,10 @@ def read_tasks(csv_path: Path) -> list[Task]:
             student = (row.get("student_name") or "").strip()
             search_keyword = (row.get("search_keyword") or "").strip()
             confirm_keyword = (row.get("confirm_keyword") or "").strip()
+            raw_message_text = str(row.get("message_text") or "")
+            message_text = (
+                raw_message_text.replace("\\r\\n", "\n").replace("\\n", "\n").strip()
+            )
             if not parent or not image:
                 continue
             tasks.append(
@@ -86,6 +91,7 @@ def read_tasks(csv_path: Path) -> list[Task]:
                     student_name=student,
                     search_keyword=search_keyword or parent,
                     confirm_keyword=confirm_keyword or parent,
+                    message_text=message_text,
                 )
             )
     return tasks
@@ -865,9 +871,33 @@ def _stabilize_wecom_ui(main_win, rounds: int = 2):
 
 
 def _copy_text_to_clipboard(text: str):
-    t = text.replace("'", "''")
-    cmd = ["powershell", "-NoProfile", "-Command", f"Set-Clipboard -Value '{t}'"]
-    subprocess.run(cmd, check=True)
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, str(text or ""))
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+def send_text_message(main_win, text: str, timeout_sec: float, paste_only: bool = False):
+    body = str(text or "").strip()
+    if not body:
+        return
+
+    _prepare_chat_input_focus(main_win)
+    _copy_text_to_clipboard(body)
+    time.sleep(0.1)
+    if not _paste_into_chat_input(main_win):
+        _prepare_chat_input_focus(main_win)
+        _safe_send_keys(main_win, "^v")
+    time.sleep(0.2)
+    if paste_only:
+        return
+    _safe_send_keys(main_win, "{ENTER}")
+
+    err = _detect_wecom_error_dialog(main_win, timeout_sec=min(max(timeout_sec, 1.0), 4.0))
+    if err:
+        raise RuntimeError(f"WeCom text send dialog error: {err}")
 
 
 def _detect_wecom_error_dialog(main_win, timeout_sec: float = 1.2) -> str | None:
@@ -1012,6 +1042,8 @@ def write_results(path: Path, rows: Iterable[dict]):
                 "parent_name",
                 "student_name",
                 "image_path",
+                "message_text",
+                "text_status",
                 "status",
                 "error",
                 "attempts",
@@ -1044,7 +1076,11 @@ def dump_visible_windows(limit: int = 80) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="WeCom report sender via UI automation")
-    parser.add_argument("--tasks-csv", required=True, help="CSV with columns: parent_name,image_path[,student_name]")
+    parser.add_argument(
+        "--tasks-csv",
+        required=True,
+        help="CSV with columns: parent_name,image_path[,student_name,search_keyword,confirm_keyword,message_text]",
+    )
     parser.add_argument("--wecom-exe", default=None, help="Optional WeCom executable path")
     parser.add_argument("--main-title-re", default=".*企业微信.*", help="Main window title regex")
     parser.add_argument("--interval-sec", type=float, default=1.2, help="Delay between tasks")
@@ -1095,6 +1131,7 @@ def main() -> int:
     )
     parser.add_argument("--debug-windows", action="store_true", help="Print visible desktop windows before run")
     parser.add_argument("--debug-chat-text", action="store_true", help="Print detected header texts for each task")
+    parser.add_argument("--skip-text-message", action="store_true", help="Do not send message_text even if CSV provides it")
     parser.add_argument("--results-csv", default="run-logs/rpa-results.csv", help="Result output file")
     parser.add_argument("--log-file", default="run-logs/rpa-sender.log", help="Log file")
     args = parser.parse_args()
@@ -1177,6 +1214,8 @@ def main() -> int:
             "parent_name": task.parent_name,
             "student_name": task.student_name,
             "image_path": str(task.image_path),
+            "message_text": task.message_text,
+            "text_status": "pending",
             "status": "pending",
             "error": "",
             "attempts": 0,
@@ -1187,6 +1226,7 @@ def main() -> int:
             row["status"] = "skipped_missing_image" if args.skip_missing_image else "failed"
             row["error"] = f"Image not found: {task.image_path}"
             row["attempts"] = 0
+            row["text_status"] = "not_sent_missing_image"
             if args.skip_missing_image:
                 logger.warning("[%s/%s|#%s] Skip missing image: %s", run_idx, run_total, orig_idx, task.image_path)
             else:
@@ -1223,6 +1263,7 @@ def main() -> int:
                             )
                     if args.dry_run:
                         logger.info("[%s/%s|#%s] Dry run, skip sending", run_idx, run_total, orig_idx)
+                        row["text_status"] = "dry_run"
                         row["status"] = "dry_run"
                     else:
                         action = "Paste image only" if args.paste_only else "Send image"
@@ -1257,6 +1298,27 @@ def main() -> int:
                                 )
                         else:
                             row["status"] = "sent"
+
+                        if args.skip_text_message:
+                            row["text_status"] = "skipped_by_flag"
+                        elif str(task.message_text or "").strip():
+                            logger.info(
+                                "[%s/%s|#%s] %s message_text after image (%s chars)",
+                                run_idx,
+                                run_total,
+                                orig_idx,
+                                "Paste-only" if args.paste_only else "Send",
+                                len(task.message_text.strip()),
+                            )
+                            send_text_message(
+                                main_win,
+                                task.message_text,
+                                args.timeout_sec,
+                                paste_only=args.paste_only,
+                            )
+                            row["text_status"] = "pasted_only" if args.paste_only else "sent"
+                        else:
+                            row["text_status"] = "skipped_empty"
                     if row.get("status") != "pasted_unverified":
                         row["error"] = ""
                     break
