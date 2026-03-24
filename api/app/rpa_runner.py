@@ -24,7 +24,7 @@ _STATE: dict[str, Any] = {
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 def _resolve_path(path_str: str | None, default_rel: str) -> Path:
@@ -37,7 +37,8 @@ def _resolve_path(path_str: str | None, default_rel: str) -> Path:
 
 def _build_command(cfg: dict[str, Any], log_file: Path, results_csv: Path) -> list[str]:
     script = _repo_root() / "tools" / "wecom_rpa_sender.py"
-    tasks_csv = _resolve_path(cfg.get("tasks_csv"), "tools/rpa_tasks.real.csv")
+    tasks_csv = _resolve_path(cfg.get("tasks_csv"), "tools/rpa_tasks.pending.csv")
+    state_csv = _resolve_path(cfg.get("state_csv"), "run-logs/rpa_send_state.csv")
     if not script.exists():
         raise FileNotFoundError(f"RPA sender not found: {script}")
     if not tasks_csv.exists():
@@ -72,6 +73,8 @@ def _build_command(cfg: dict[str, Any], log_file: Path, results_csv: Path) -> li
         str(cfg.get("resume_from", 1)),
         "--results-csv",
         str(results_csv),
+        "--state-csv",
+        str(state_csv),
         "--log-file",
         str(log_file),
     ]

@@ -2,15 +2,17 @@ services:
   api:
     build: ./api
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./data:/data
+      - ./tools:/app/tools
+      - ./run-logs:/app/run-logs
     environment:
       - APP_CONFIG=/data/config.yaml
   web:
     build: ./web
     ports:
-      - "5173:5173"
+      - "8089:5173"
     environment:
       - VITE_API_BASE=http://api:8000
     depends_on:
