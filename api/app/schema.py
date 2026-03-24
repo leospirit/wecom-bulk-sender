@@ -30,7 +30,7 @@ class ConfigUpdateRequest(BaseModel):
 
 
 class RpaStartRequest(BaseModel):
-    tasks_csv: str = "tools/rpa_tasks.real.csv"
+    tasks_csv: str = "tools/rpa_tasks.pending.csv"
     wecom_exe: Optional[str] = None
     main_title_re: str = r".*(WeCom|WXWork|企业微信).*"
     send_mode: Literal["clipboard", "dialog", "auto"] = "clipboard"

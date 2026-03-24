@@ -1,13 +1,13 @@
-(function () {
+﻿(function () {
   const e = React.createElement;
   const useEffect = React.useEffect;
   const useMemo = React.useMemo;
   const useState = React.useState;
 
   const DEFAULT_FORM = {
-    tasks_csv: "tools/rpa_tasks.real.csv",
+    tasks_csv: "tools/rpa_tasks.pending.csv",
     send_mode: "clipboard",
-    main_title_re: ".*(WeCom|WXWork|企业微信).*",
+    main_title_re: ".*(WeCom|WXWork|浼佷笟寰俊).*",
     interval_sec: 4,
     timeout_sec: 20,
     max_retries: 3,
@@ -46,7 +46,7 @@
     const [form, setForm] = useState(DEFAULT_FORM);
     const [status, setStatus] = useState({ running: false, result_counts: {} });
     const [logs, setLogs] = useState([]);
-    const [msg, setMsg] = useState("就绪");
+    const [msg, setMsg] = useState("灏辩华");
     const [busy, setBusy] = useState(false);
 
     const counts = status.result_counts || {};
@@ -83,7 +83,7 @@
     }
 
     async function startRun() {
-      if (!confirm(form.paste_only ? "仅粘贴模式，确认开始？" : "正式发送模式，确认开始？")) return;
+      if (!confirm(form.paste_only ? "浠呯矘璐存ā寮忥紝纭寮€濮嬶紵" : "姝ｅ紡鍙戦€佹ā寮忥紝纭寮€濮嬶紵")) return;
       setBusy(true);
       try {
         await fetchJson("/api/rpa/start", {
@@ -91,7 +91,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(form)
         });
-        setMsg("已启动");
+        setMsg("宸插惎鍔?);
         await refresh();
       } catch (err) {
         setMsg(err.message || String(err));
@@ -104,7 +104,7 @@
       setBusy(true);
       try {
         await fetchJson("/api/rpa/stop", { method: "POST" });
-        setMsg("已停止");
+        setMsg("宸插仠姝?);
         await refresh();
       } catch (err) {
         setMsg(err.message || String(err));
@@ -122,24 +122,24 @@
     return e(
       "div",
       { className: "wrap" },
-      e("div", { className: "hero" }, e("h1", null, "RPA Lite Console"), e("p", null, "不依赖 Node/Vite，避免 EPERM；只启动本机 FastAPI，不影响 Docker 其他程序")),
+      e("div", { className: "hero" }, e("h1", null, "RPA Lite Console"), e("p", null, "涓嶄緷璧?Node/Vite锛岄伩鍏?EPERM锛涘彧鍚姩鏈満 FastAPI锛屼笉褰卞搷 Docker 鍏朵粬绋嬪簭")),
       e(
         "div",
         { className: "card" },
         e(
           "div",
           { className: "toolbar" },
-          e("button", { className: "primary", onClick: startRun, disabled: busy || status.running }, "开始运行"),
-          e("button", { onClick: stopRun, disabled: busy || !status.running }, "停止运行"),
-          e("button", { onClick: () => refresh().catch(() => undefined) }, "刷新"),
-          e("span", null, status.running ? "运行中" : "空闲")
+          e("button", { className: "primary", onClick: startRun, disabled: busy || status.running }, "寮€濮嬭繍琛?),
+          e("button", { onClick: stopRun, disabled: busy || !status.running }, "鍋滄杩愯"),
+          e("button", { onClick: () => refresh().catch(() => undefined) }, "鍒锋柊"),
+          e("span", null, status.running ? "杩愯涓? : "绌洪棽")
         ),
         e(
           "div",
           { className: "grid" },
-          e("label", null, "任务 CSV"),
+          e("label", null, "浠诲姟 CSV"),
           e("input", { value: form.tasks_csv, onChange: (ev) => patch("tasks_csv", ev.target.value) }),
-          e("label", null, "发送模式"),
+          e("label", null, "鍙戦€佹ā寮?),
           e(
             "select",
             { value: form.send_mode, onChange: (ev) => patch("send_mode", ev.target.value) },
@@ -147,13 +147,13 @@
             e("option", { value: "dialog" }, "dialog"),
             e("option", { value: "auto" }, "auto")
           ),
-          e("label", null, "间隔秒"),
+          e("label", null, "闂撮殧绉?),
           e("input", { type: "number", value: form.interval_sec, onChange: (ev) => patch("interval_sec", Number(ev.target.value)) }),
-          e("label", null, "超时秒"),
+          e("label", null, "瓒呮椂绉?),
           e("input", { type: "number", value: form.timeout_sec, onChange: (ev) => patch("timeout_sec", Number(ev.target.value)) }),
-          e("label", null, "最大重试"),
+          e("label", null, "鏈€澶ч噸璇?),
           e("input", { type: "number", value: form.max_retries, onChange: (ev) => patch("max_retries", Number(ev.target.value)) }),
-          e("label", null, "仅粘贴"),
+          e("label", null, "浠呯矘璐?),
           e("input", { type: "checkbox", checked: !!form.paste_only, onChange: (ev) => patch("paste_only", ev.target.checked) })
         ),
         e(
@@ -165,11 +165,13 @@
           e("div", null, "failed: ", counts.failed || 0)
         ),
         e("div", { className: "hint" }, msg),
-        e("div", { className: "hint" }, "命令预览: ", cmdPreview)
+        e("div", { className: "hint" }, "鍛戒护棰勮: ", cmdPreview)
       ),
-      e("div", { className: "card" }, e("h3", null, "日志"), e("div", { className: "log" }, (logs || []).join("\n") || "暂无日志"))
+      e("div", { className: "card" }, e("h3", null, "鏃ュ織"), e("div", { className: "log" }, (logs || []).join("\n") || "鏆傛棤鏃ュ織"))
     );
   }
 
   ReactDOM.createRoot(document.getElementById("root")).render(e(App));
 })();
+
+

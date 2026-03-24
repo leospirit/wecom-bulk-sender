@@ -160,6 +160,36 @@ export type RpaStatus = {
   result_counts: Record<string, number>;
 };
 
+export async function refreshRpaTasks(scoreApiBase = "http://host.docker.internal:8010"): Promise<{ total: number; enriched: number; no_match_or_empty: number; errors: number; delta: number; pending: number }> {
+  const r = await fetch(`/api/rpa/refresh-tasks?score_api_base=${encodeURIComponent(scoreApiBase)}`, { method: "POST" });
+  if (!r.ok) {
+    let msg = "refresh rpa tasks failed";
+    try {
+      const body = await r.json();
+      msg = body?.detail || msg;
+    } catch {
+      // ignore
+    }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+export async function backfillRpaState(): Promise<{ handled_results: number; matched: number; unmatched: number; ambiguous: number; ignored_status: number; merged_total: number }> {
+  const r = await fetch("/api/rpa/backfill-state", { method: "POST" });
+  if (!r.ok) {
+    let msg = "backfill rpa state failed";
+    try {
+      const body = await r.json();
+      msg = body?.detail || msg;
+    } catch {
+      // ignore
+    }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
 export async function getRpaStatus(): Promise<RpaStatus> {
   const r = await fetch("/api/rpa/status");
   if (!r.ok) throw new Error("get rpa status failed");

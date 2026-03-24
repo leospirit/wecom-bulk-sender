@@ -1,0 +1,6 @@
+﻿corp_id: your_wecom_corp_id
+agent_id: 'your_agent_id'
+secret: your_agent_secret
+root_path: /data/inbox
+rate_limit_per_sec: 1.0
+max_concurrency: 2

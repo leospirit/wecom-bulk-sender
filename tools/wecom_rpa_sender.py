@@ -33,6 +33,8 @@ class Task:
     parent_name: str
     image_path: Path
     student_name: str = ""
+    class_name: str = ""
+    report_submission_id: str = ""
     search_keyword: str = ""
     confirm_keyword: str = ""
     message_text: str = ""
@@ -76,6 +78,8 @@ def read_tasks(csv_path: Path) -> list[Task]:
             parent = (row.get("parent_name") or "").strip()
             image = (row.get("image_path") or "").strip()
             student = (row.get("student_name") or "").strip()
+            class_name = (row.get("class_name") or "").strip()
+            report_submission_id = (row.get("report_submission_id") or "").strip()
             search_keyword = (row.get("search_keyword") or "").strip()
             confirm_keyword = (row.get("confirm_keyword") or "").strip()
             raw_message_text = str(row.get("message_text") or "")
@@ -89,6 +93,8 @@ def read_tasks(csv_path: Path) -> list[Task]:
                     parent_name=parent,
                     image_path=Path(image),
                     student_name=student,
+                    class_name=class_name,
+                    report_submission_id=report_submission_id,
                     search_keyword=search_keyword or parent,
                     confirm_keyword=confirm_keyword or parent,
                     message_text=message_text,
@@ -1020,6 +1026,79 @@ def merge_result_rows(previous_rows: list[dict], new_rows: list[dict]) -> list[d
     return merged
 
 
+HANDLED_SEND_STATUSES = {"ok", "sent", "pasted_only", "pasted_unverified"}
+
+
+def state_row_key(row: dict) -> tuple[str, str, str]:
+    return (
+        _norm_key_part(row.get("class_name", "")),
+        _norm_key_part(row.get("student_name", "")),
+        _norm_key_part(row.get("report_submission_id", "")),
+    )
+
+
+def merge_state_rows(previous_rows: list[dict], new_rows: list[dict]) -> list[dict]:
+    new_map = {state_row_key(r): r for r in new_rows}
+    merged: list[dict] = []
+    used = set()
+    for r in previous_rows:
+        k = state_row_key(r)
+        if k in new_map:
+            merged.append(new_map[k])
+            used.add(k)
+        else:
+            merged.append(r)
+    for r in new_rows:
+        k = state_row_key(r)
+        if k not in used:
+            merged.append(r)
+    return merged
+
+
+def build_send_state_rows(rows: list[dict], timestamp: str | None = None) -> list[dict]:
+    updated_at = timestamp or datetime.now().isoformat(timespec="seconds")
+    state_rows: list[dict] = []
+    for row in rows:
+        status = str(row.get("status") or "").strip()
+        if status not in HANDLED_SEND_STATUSES:
+            continue
+        state_rows.append(
+            {
+                "parent_name": str(row.get("parent_name") or "").strip(),
+                "student_name": str(row.get("student_name") or "").strip(),
+                "class_name": str(row.get("class_name") or "").strip(),
+                "report_submission_id": str(row.get("report_submission_id") or "").strip(),
+                "image_path": str(row.get("image_path") or "").strip(),
+                "status": status,
+                "text_status": str(row.get("text_status") or "").strip(),
+                "updated_at": updated_at,
+            }
+        )
+    return state_rows
+
+
+def write_send_state(path: Path, rows: Iterable[dict]):
+    rows = list(rows)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "parent_name",
+                "student_name",
+                "class_name",
+                "report_submission_id",
+                "image_path",
+                "status",
+                "text_status",
+                "updated_at",
+            ],
+        )
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+
+
 def recover_ui_after_failure(main_win):
     # Best-effort UI recovery between retries/tasks.
     try:
@@ -1041,6 +1120,8 @@ def write_results(path: Path, rows: Iterable[dict]):
             fieldnames=[
                 "parent_name",
                 "student_name",
+                "class_name",
+                "report_submission_id",
                 "image_path",
                 "message_text",
                 "text_status",
@@ -1133,6 +1214,7 @@ def main() -> int:
     parser.add_argument("--debug-chat-text", action="store_true", help="Print detected header texts for each task")
     parser.add_argument("--skip-text-message", action="store_true", help="Do not send message_text even if CSV provides it")
     parser.add_argument("--results-csv", default="run-logs/rpa-results.csv", help="Result output file")
+    parser.add_argument("--state-csv", default="run-logs/rpa_send_state.csv", help="Handled send-state CSV")
     parser.add_argument("--log-file", default="run-logs/rpa-sender.log", help="Log file")
     args = parser.parse_args()
 
@@ -1213,6 +1295,8 @@ def main() -> int:
         row = {
             "parent_name": task.parent_name,
             "student_name": task.student_name,
+            "class_name": task.class_name,
+            "report_submission_id": task.report_submission_id,
             "image_path": str(task.image_path),
             "message_text": task.message_text,
             "text_status": "pending",
@@ -1352,6 +1436,10 @@ def main() -> int:
     if args.resume_failed and output_path.resolve() == Path(args.resume_results_csv).resolve():
         output_rows = merge_result_rows(previous_rows, results)
     write_results(output_path, output_rows)
+    state_path = Path(args.state_csv)
+    previous_state_rows = read_result_rows(state_path)
+    state_rows = build_send_state_rows(results)
+    write_send_state(state_path, merge_state_rows(previous_state_rows, state_rows))
     sent = sum(1 for r in results if r["status"] in {"ok", "sent"})
     pasted = sum(1 for r in results if r["status"] in {"pasted_only", "pasted_unverified"})
     pasted_unverified = sum(1 for r in results if r["status"] == "pasted_unverified")
@@ -1368,6 +1456,7 @@ def main() -> int:
         skipped,
     )
     logger.info("Result file: %s", args.results_csv)
+    logger.info("State file: %s", args.state_csv)
     return 0 if failed == 0 else 1
 
 

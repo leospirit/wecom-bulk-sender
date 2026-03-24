@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 from __future__ import annotations
 
 import csv
@@ -17,26 +17,146 @@ from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 
 
+def default_tasks_csv_path(repo_root: Path) -> Path:
+    return repo_root / "tools" / "rpa_tasks.with-message.csv"
+
+
+def default_delta_csv_path(repo_root: Path) -> Path:
+    return repo_root / "tools" / "rpa_tasks.delta.csv"
+
+
+def default_pending_csv_path(repo_root: Path) -> Path:
+    return repo_root / "tools" / "rpa_tasks.pending.csv"
+
+
+def resolve_tasks_csv_for_scope(repo_root: Path, send_scope: str) -> str:
+    if str(send_scope or "").strip() == "all":
+        return str(default_tasks_csv_path(repo_root))
+    return str(default_pending_csv_path(repo_root))
+
+
+def normalize_saved_csv_path(repo_root: Path, saved_path: str) -> str:
+    raw = (saved_path or "").strip()
+    if not raw:
+        return str(default_tasks_csv_path(repo_root))
+    legacy = repo_root / "tools" / "rpa_tasks.real.csv"
+    try:
+        candidate = Path(raw)
+    except Exception:
+        return raw
+    if candidate == legacy:
+        return str(default_tasks_csv_path(repo_root))
+    return raw
+
+
+def build_refresh_tasks_command(repo_root: Path, score_api_base: str = "http://localhost") -> list[str]:
+    return [
+        sys.executable,
+        str(repo_root / "tools" / "build_rpa_tasks_from_score.py"),
+        "--report-driven",
+        "--contacts-xlsx",
+        str(repo_root / "data" / "contacts.xlsx"),
+        "--output-csv",
+        str(default_tasks_csv_path(repo_root)),
+        "--delta-output-csv",
+        str(default_delta_csv_path(repo_root)),
+        "--pending-output-csv",
+        str(default_pending_csv_path(repo_root)),
+        "--state-csv",
+        str(repo_root / "run-logs" / "rpa_send_state.csv"),
+        "--score-api-base",
+        score_api_base,
+    ]
+
+
+def build_backfill_state_command(repo_root: Path) -> list[str]:
+    return [
+        sys.executable,
+        str(repo_root / "tools" / "backfill_rpa_send_state.py"),
+        "--results-csv",
+        str(repo_root / "run-logs" / "rpa-results.csv"),
+        "--tasks-csv",
+        str(repo_root / "tools" / "rpa_tasks.with-message.csv"),
+        "--state-csv",
+        str(repo_root / "run-logs" / "rpa_send_state.csv"),
+    ]
+
+
+def parse_refresh_tasks_summary(output: str) -> dict[str, int]:
+    summary = {"total": 0, "enriched": 0, "no_match_or_empty": 0, "errors": 0, "delta": 0, "pending": 0}
+    for key in summary:
+        match = re.search(rf"{re.escape(key)}=(\d+)", output)
+        if match:
+            summary[key] = int(match.group(1))
+    return summary
+
+
+def parse_backfill_state_summary(output: str) -> dict[str, int]:
+    summary = {
+        "handled_results": 0,
+        "matched": 0,
+        "unmatched": 0,
+        "ambiguous": 0,
+        "ignored_status": 0,
+        "merged_total": 0,
+    }
+    for key in summary:
+        match = re.search(rf"{re.escape(key)}=(\d+)", output)
+        if match:
+            summary[key] = int(match.group(1))
+    return summary
+
+
+def format_backfill_summary_text(summary: dict[str, int]) -> str:
+    return (
+        f"历史台账：匹配 {summary.get('matched', 0)}，"
+        f"未匹配 {summary.get('unmatched', 0)}，"
+        f"歧义 {summary.get('ambiguous', 0)}，"
+        f"累计 {summary.get('merged_total', 0)}"
+    )
+
+
+def finalize_refresh_result(
+    *,
+    repo_root: Path,
+    send_scope: str,
+    summary: dict[str, int],
+    set_csv_path,
+    set_status,
+    inspect_tasks,
+):
+    set_csv_path(resolve_tasks_csv_for_scope(repo_root, send_scope))
+    set_status(
+        f"已刷新发送任务：总数{summary.get('total', 0)} 成功{summary.get('enriched', 0)} 未匹配{summary.get('no_match_or_empty', 0)} 错误{summary.get('errors', 0)} 待发送{summary.get('pending', 0)}"
+    )
+    inspect_tasks()
+
+
 class RpaGuiApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("企业微信批量助手")
-        self.root.geometry("1220x780")
-        self.root.minsize(1060, 700)
+        self.root.geometry("1220x760")
+        self.root.minsize(1040, 660)
 
         self.repo_root = Path(__file__).resolve().parents[1]
         self.sender_script = self.repo_root / "tools" / "wecom_rpa_sender.py"
-        self.default_csv = self.repo_root / "tools" / "rpa_tasks.real.csv"
+        self.default_csv = default_tasks_csv_path(self.repo_root)
+        self.default_delta_csv = default_delta_csv_path(self.repo_root)
+        self.default_pending_csv = default_pending_csv_path(self.repo_root)
         self.config_path = self.repo_root / "run-logs" / "rpa-ui-config.json"
 
         self.proc: subprocess.Popen | None = None
         self.log_q: queue.Queue[tuple[str, str]] = queue.Queue()
         self.running = False
+        self.refreshing = False
+        self.backfilling = False
         self._auto_minimized = False
         self.progress_total = 0
         self.progress_current = 0
 
-        self.csv_path = tk.StringVar(value=str(self.default_csv))
+        self.send_scope = tk.StringVar(value="pending")
+        self.csv_path = tk.StringVar(value=resolve_tasks_csv_for_scope(self.repo_root, self.send_scope.get()))
         self.send_mode = tk.StringVar(value="clipboard")
         self.main_title_re = tk.StringVar(value=r".*(WeCom|WXWork|企业微信).*")
         self.interval_sec = tk.StringVar(value="3")
@@ -63,6 +183,8 @@ class RpaGuiApp:
         self.progress_text = tk.StringVar(value="0/0")
         self.cmd_preview = tk.StringVar(value="")
         self.tasks_info = tk.StringVar(value="未检查任务文件")
+        self.pending_info = tk.StringVar(value="待发送 0 行")
+        self.backfill_info = tk.StringVar(value="历史台账：尚未补历史")
         self.mode_name = tk.StringVar(value="测试模式（仅粘贴）")
         self.mode_desc = tk.StringVar(value="不会发送消息，仅粘贴图片，适合联调")
         self.mode_buttons: dict[str, tk.Button] = {}
@@ -294,21 +416,38 @@ class RpaGuiApp:
         main.grid_columnconfigure(1, weight=1)
         main.grid_rowconfigure(0, weight=1)
 
-        left = ttk.Frame(main, style="App.TFrame")
-        left.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        left_canvas = tk.Canvas(main, highlightthickness=0, bd=0, relief="flat")
+        left_canvas.grid(row=0, column=0, sticky="nsw", padx=(0, 4))
+        left_scrollbar = ttk.Scrollbar(main, orient="vertical", command=left_canvas.yview)
+        left_scrollbar.grid(row=0, column=0, sticky="nse", padx=(0, 12))
+        left_canvas.configure(yscrollcommand=left_scrollbar.set, width=760)
+
+        left = ttk.Frame(left_canvas, style="App.TFrame")
         left.grid_columnconfigure(0, weight=1)
+        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
 
         right = ttk.Frame(main, style="App.TFrame")
         right.grid(row=0, column=1, sticky="nsew")
         right.grid_columnconfigure(0, weight=1)
         right.grid_rowconfigure(0, weight=1)
 
+        def _sync_left_scroll_region(_event=None):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            req_width = max(720, left.winfo_reqwidth())
+            left_canvas.configure(width=req_width)
+            left_canvas.itemconfigure(left_window, width=req_width)
+
+        left.bind("<Configure>", _sync_left_scroll_region)
+        left_canvas.bind("<Configure>", lambda event: left_canvas.itemconfigure(left_window, width=max(event.width, 720)))
+
         self._build_step_cards(left)
         self._build_tabs(right)
         self._apply_theme(self.theme_mode.get())
+        self.left_canvas = left_canvas
+        self.left_scrollbar = left_scrollbar
 
     def _build_header(self, root: tk.Tk):
-        self.header = tk.Frame(root, bg="#0f4cdb", height=82)
+        self.header = tk.Frame(root, bg="#0f4cdb", height=68)
         self.header.grid(row=0, column=0, sticky="ew")
         self.header.grid_columnconfigure(0, weight=1)
 
@@ -317,24 +456,24 @@ class RpaGuiApp:
             text="企业微信批量助手",
             bg="#0f4cdb",
             fg="#ffffff",
-            font=("Microsoft YaHei UI", 15, "bold"),
+            font=("Microsoft YaHei UI", 13, "bold"),
         )
-        self.header_title.grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
+        self.header_title.grid(row=0, column=0, sticky="w", padx=14, pady=(8, 0))
         self.header_sub = tk.Label(
             self.header,
             text="流程：1 选择任务文件  ->  2 选择运行模式  ->  3 执行",
             bg="#0f4cdb",
             fg="#dbe7ff",
-            font=("Microsoft YaHei UI", 9),
+            font=("Microsoft YaHei UI", 8),
         )
-        self.header_sub.grid(row=1, column=0, sticky="w", padx=14, pady=(4, 12))
+        self.header_sub.grid(row=1, column=0, sticky="w", padx=14, pady=(2, 8))
 
         self.btn_theme = self._make_button(self.header, "深色", self._toggle_theme, "secondary")
-        self.btn_theme.grid(row=0, column=1, rowspan=2, sticky="e", padx=14, pady=16)
+        self.btn_theme.grid(row=0, column=1, rowspan=2, sticky="e", padx=14, pady=10)
 
     def _build_status_bar(self, root: tk.Tk):
         row = ttk.Frame(root, style="App.TFrame")
-        row.grid(row=1, column=0, sticky="ew", padx=12, pady=(10, 6))
+        row.grid(row=1, column=0, sticky="ew", padx=12, pady=(6, 4))
         row.grid_columnconfigure(2, weight=1)
 
         ttk.Label(row, text="状态", style="Sub.TLabel").grid(row=0, column=0, sticky="w")
@@ -345,7 +484,7 @@ class RpaGuiApp:
         ttk.Label(row, textvariable=self.progress_text, style="Sub.TLabel").grid(row=0, column=3, sticky="e")
 
         self.stats_frame = tk.Frame(row, bg="#f4f7fb")
-        self.stats_frame.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        self.stats_frame.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(6, 0))
         for i in range(5):
             self.stats_frame.grid_columnconfigure(i, weight=1)
 
@@ -362,9 +501,9 @@ class RpaGuiApp:
             textvariable=var,
             bg="#ffffff",
             fg="#1f2a37",
-            font=("Microsoft YaHei UI", 9, "bold"),
-            padx=10,
-            pady=6,
+            font=("Microsoft YaHei UI", 8, "bold"),
+            padx=9,
+            pady=4,
             relief="flat",
             bd=0,
         )
@@ -380,13 +519,30 @@ class RpaGuiApp:
         card = ttk.LabelFrame(parent, text="第 1 步：选择任务文件", style="Card.TLabelframe")
         card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(1, weight=1)
+        card.grid_columnconfigure(2, weight=0)
+        card.grid_columnconfigure(3, weight=0)
 
         ttk.Label(card, text="任务 CSV", style="App.TLabel").grid(row=0, column=0, sticky="w", padx=10, pady=8)
         ttk.Entry(card, textvariable=self.csv_path, width=42).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
-        self._make_button(card, "▦ 选择", self._pick_csv, "secondary").grid(row=0, column=2, padx=(0, 10), pady=8)
+        self._make_button(card, "▦ 选择", self._pick_csv, "secondary").grid(row=0, column=2, padx=(0, 8), pady=8)
+        self.btn_refresh = self._make_button(card, "↻ 刷新发送任务", self.refresh_tasks, "secondary")
+        self.btn_refresh.grid(row=0, column=3, padx=(0, 10), pady=8)
+        self.btn_backfill = self._make_button(card, "⤴ 补历史发送状态", self.backfill_send_state, "secondary")
+        self.btn_backfill.grid(row=1, column=3, padx=(0, 10), pady=(0, 8))
 
-        self._make_button(card, "✓ 检查任务", self.inspect_tasks, "secondary").grid(row=1, column=0, padx=10, pady=(0, 8), sticky="w")
-        ttk.Label(card, textvariable=self.tasks_info, style="Sub.TLabel").grid(row=1, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(card, text="发送范围", style="App.TLabel").grid(row=1, column=0, sticky="w", padx=10, pady=(0, 8))
+        ttk.Combobox(
+            card,
+            textvariable=self.send_scope,
+            values=("pending", "all"),
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=1, sticky="w", padx=(0, 8), pady=(0, 8))
+
+        self._make_button(card, "✓ 检查任务", self.inspect_tasks, "secondary").grid(row=2, column=0, padx=10, pady=(0, 8), sticky="w")
+        ttk.Label(card, textvariable=self.tasks_info, style="Sub.TLabel").grid(row=2, column=1, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(card, textvariable=self.pending_info, style="State.TLabel").grid(row=3, column=1, columnspan=3, sticky="w", pady=(0, 10))
+        ttk.Label(card, textvariable=self.backfill_info, style="Sub.TLabel").grid(row=4, column=1, columnspan=3, sticky="w", pady=(0, 10))
 
     def _build_step2(self, parent: ttk.Frame):
         card = ttk.LabelFrame(parent, text="第 2 步：选择运行模式", style="Card.TLabelframe")
@@ -524,6 +680,7 @@ class RpaGuiApp:
     def _var_map(self) -> dict[str, tk.Variable]:
         return {
             "csv_path": self.csv_path,
+            "send_scope": self.send_scope,
             "send_mode": self.send_mode,
             "main_title_re": self.main_title_re,
             "interval_sec": self.interval_sec,
@@ -552,6 +709,10 @@ class RpaGuiApp:
                 var.trace_add("write", lambda *_: self._refresh_cmd_preview())
             except Exception:
                 pass
+        try:
+            self.send_scope.trace_add("write", lambda *_: self._sync_csv_path_with_scope())
+        except Exception:
+            pass
 
     def _load_config(self):
         if not self.config_path.exists():
@@ -563,9 +724,15 @@ class RpaGuiApp:
         for name, var in self._var_map().items():
             if name in data:
                 try:
-                    var.set(data[name])
+                    value = data[name]
+                    if name == "csv_path":
+                        value = normalize_saved_csv_path(self.repo_root, str(value))
+                    if name == "send_scope" and str(value).strip() == "delta":
+                        value = "pending"
+                    var.set(value)
                 except Exception:
                     pass
+        self._sync_csv_path_with_scope()
 
     def _save_config(self):
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -585,10 +752,14 @@ class RpaGuiApp:
             self.csv_path.set(path)
             self.inspect_tasks()
 
+    def _sync_csv_path_with_scope(self):
+        self.csv_path.set(resolve_tasks_csv_for_scope(self.repo_root, self.send_scope.get()))
+
     def inspect_tasks(self):
         csv_path = Path(self.csv_path.get().strip())
         if not csv_path.exists():
             self.tasks_info.set("文件不存在")
+            self.pending_info.set("待发送 0 行")
             return
         try:
             with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
@@ -600,10 +771,12 @@ class RpaGuiApp:
                     if (row.get("parent_name") or "").strip() and (row.get("image_path") or "").strip():
                         valid += 1
             self.tasks_info.set(f"共 {total} 行，可执行 {valid} 行")
+            self.pending_info.set(f"待发送 {valid} 行")
             self.summary_total.set(f"总数 {valid}")
-            self.status_text.set("任务文件检查完成")
+            self.status_text.set(f"已检查任务，共 {total} 行，可执行 {valid} 行")
         except Exception as e:
             self.tasks_info.set(f"读取失败: {e}")
+            self.pending_info.set("待发送 0 行")
 
     def _set_running(self, running: bool):
         self.running = running
@@ -611,12 +784,40 @@ class RpaGuiApp:
         self.btn_stop.configure(state="normal" if running else "disabled")
         if hasattr(self, "btn_quick"):
             self.btn_quick.configure(state="disabled" if running else "normal")
+        if hasattr(self, "btn_refresh"):
+            self.btn_refresh.configure(state="disabled" if running or self.refreshing or self.backfilling else "normal")
+        if hasattr(self, "btn_backfill"):
+            self.btn_backfill.configure(state="disabled" if running or self.refreshing or self.backfilling else "normal")
         if running:
             self.status_text.set("运行中")
         elif self.status_text.get() == "运行中":
             self.status_text.set("就绪")
         if not running:
             self._save_config()
+
+    def _set_refresh_running(self, refreshing: bool):
+        self.refreshing = refreshing
+        if hasattr(self, "btn_refresh"):
+            self.btn_refresh.configure(state="disabled" if refreshing or self.running or self.backfilling else "normal")
+        if hasattr(self, "btn_backfill"):
+            self.btn_backfill.configure(state="disabled" if refreshing or self.running or self.backfilling else "normal")
+        self.btn_run.configure(state="disabled" if refreshing or self.running or self.backfilling else "normal")
+        if hasattr(self, "btn_quick"):
+            self.btn_quick.configure(state="disabled" if refreshing or self.running or self.backfilling else "normal")
+        if refreshing:
+            self.status_text.set("刷新发送任务中")
+
+    def _set_backfill_running(self, backfilling: bool):
+        self.backfilling = backfilling
+        if hasattr(self, "btn_backfill"):
+            self.btn_backfill.configure(state="disabled" if backfilling or self.running or self.refreshing else "normal")
+        if hasattr(self, "btn_refresh"):
+            self.btn_refresh.configure(state="disabled" if backfilling or self.running or self.refreshing else "normal")
+        self.btn_run.configure(state="disabled" if backfilling or self.running or self.refreshing else "normal")
+        if hasattr(self, "btn_quick"):
+            self.btn_quick.configure(state="disabled" if backfilling or self.running or self.refreshing else "normal")
+        if backfilling:
+            self.status_text.set("补历史发送状态中")
 
     def _log(self, msg: str):
         self.log_box.insert("end", msg.rstrip() + "\n")
@@ -652,6 +853,37 @@ class RpaGuiApp:
                     self._log(msg)
                     self._on_run_finished(msg)
                     self._set_running(False)
+                elif kind == "refresh_done":
+                    self._log(msg)
+                    summary = parse_refresh_tasks_summary(msg)
+                    finalize_refresh_result(
+                        repo_root=self.repo_root,
+                        send_scope=self.send_scope.get(),
+                        summary=summary,
+                        set_csv_path=self.csv_path.set,
+                        set_status=self.status_text.set,
+                        inspect_tasks=self.inspect_tasks,
+                    )
+                    self._set_refresh_running(False)
+                elif kind == "refresh_error":
+                    self._log(msg)
+                    self.status_text.set("刷新发送任务失败")
+                    self._set_refresh_running(False)
+                    messagebox.showerror("刷新发送任务失败", msg)
+                elif kind == "backfill_done":
+                    self._log(msg)
+                    summary = parse_backfill_state_summary(msg)
+                    self.status_text.set(
+                        f"已补历史：匹配{summary.get('matched', 0)} 未匹配{summary.get('unmatched', 0)} 歧义{summary.get('ambiguous', 0)}"
+                    )
+                    self.backfill_info.set(format_backfill_summary_text(summary))
+                    self._set_backfill_running(False)
+                    self.inspect_tasks()
+                elif kind == "backfill_error":
+                    self._log(msg)
+                    self.status_text.set("补历史发送状态失败")
+                    self._set_backfill_running(False)
+                    messagebox.showerror("补历史发送状态失败", msg)
         except queue.Empty:
             pass
         self.root.after(100, self._drain_logs)
@@ -910,6 +1142,93 @@ class RpaGuiApp:
         self._refresh_cmd_preview()
         self.status_text.set("已应用模式预设")
         self._sync_mode_button_from_state()
+
+    def refresh_tasks(self):
+        if self.running or self.refreshing or self.backfilling:
+            return
+
+        cmd = build_refresh_tasks_command(self.repo_root)
+        contacts_xlsx = self.repo_root / "data" / "contacts.xlsx"
+        refresh_script = self.repo_root / "tools" / "build_rpa_tasks_from_score.py"
+        if not contacts_xlsx.exists():
+            messagebox.showerror("刷新发送任务失败", f"通讯录不存在: {contacts_xlsx}")
+            return
+        if not refresh_script.exists():
+            messagebox.showerror("刷新发送任务失败", f"脚本不存在: {refresh_script}")
+            return
+
+        self._log("=" * 90)
+        self._log("[UI] 刷新发送任务")
+        self._log("执行命令:")
+        self._log(" ".join(f'"{c}"' if " " in c else c for c in cmd))
+        self._set_refresh_running(True)
+
+        def _worker():
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    cwd=str(self.repo_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                output = (proc.stdout or "").strip()
+                if proc.returncode == 0:
+                    self.log_q.put(("refresh_done", output or "total=0 enriched=0 no_match_or_empty=0 errors=0 delta=0 pending=0"))
+                else:
+                    self.log_q.put(("refresh_error", output or f"刷新命令失败，退出码: {proc.returncode}"))
+            except Exception as e:
+                self.log_q.put(("refresh_error", f"刷新命令启动失败: {e}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def backfill_send_state(self):
+        if self.running or self.refreshing or self.backfilling:
+            return
+
+        cmd = build_backfill_state_command(self.repo_root)
+        backfill_script = self.repo_root / "tools" / "backfill_rpa_send_state.py"
+        if not backfill_script.exists():
+            messagebox.showerror("补历史发送状态失败", f"脚本不存在: {backfill_script}")
+            return
+
+        ok = messagebox.askyesno(
+            "补历史发送状态",
+            "将根据旧的 results.csv 回填 rpa_send_state.csv。\n仅会补可安全匹配的历史记录。\n是否继续？",
+        )
+        if not ok:
+            return
+
+        self._log("=" * 90)
+        self._log("[UI] 补历史发送状态")
+        self._log("执行命令:")
+        self._log(" ".join(f'"{c}"' if " " in c else c for c in cmd))
+        self._set_backfill_running(True)
+
+        def _worker():
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    cwd=str(self.repo_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                output = (proc.stdout or "").strip()
+                if proc.returncode == 0:
+                    self.log_q.put(("backfill_done", output or "handled_results=0 matched=0 unmatched=0 ambiguous=0 ignored_status=0 merged_total=0"))
+                else:
+                    self.log_q.put(("backfill_error", output or f"回填命令失败，退出码: {proc.returncode}"))
+            except Exception as e:
+                self.log_q.put(("backfill_error", f"回填命令启动失败: {e}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def quick_test(self):
         self.apply_preset("test")

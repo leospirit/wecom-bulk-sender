@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import {
   clearAllTasks,
   deleteSelectedTasks,
@@ -7,6 +7,8 @@ import {
   getPublicIp,
   getRpaLogTail,
   getRpaStatus,
+  backfillRpaState,
+  refreshRpaTasks,
   getStatus,
   listTasks,
   scan,
@@ -26,9 +28,9 @@ import TaskTable from "./components/TaskTable";
 type TabKey = "api" | "rpa";
 
 const defaultRpaForm: RpaStartPayload = {
-  tasks_csv: "tools/rpa_tasks.real.csv",
+  tasks_csv: "tools/rpa_tasks.pending.csv",
   wecom_exe: "",
-  main_title_re: ".*(WeCom|WXWork|企业微信).*",
+  main_title_re: ".*(WeCom|WXWork|浼佷笟寰俊).*",
   send_mode: "clipboard",
   dry_run: false,
   paste_only: true,
@@ -81,7 +83,10 @@ export default function App() {
   const [rpaStatus, setRpaStatus] = useState<RpaStatus>(emptyRpaStatus);
   const [rpaLogs, setRpaLogs] = useState<string[]>([]);
   const [rpaMessage, setRpaMessage] = useState<string | null>(null);
+  const [rpaBackfillSummary, setRpaBackfillSummary] = useState("历史台账：尚未补历史");
+  const [rpaPendingCount, setRpaPendingCount] = useState<number | null>(null);
   const [rpaLoading, setRpaLoading] = useState(false);
+  const [rpaSendScope, setRpaSendScope] = useState<"pending" | "all">("pending");
 
   const selectedCount = useMemo(() => selected.size, [selected]);
   const rpaCounts = rpaStatus.result_counts || {};
@@ -285,6 +290,52 @@ export default function App() {
     setRpaForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  function tasksCsvForScope(scope: "pending" | "all") {
+    return scope === "all" ? "tools/rpa_tasks.with-message.csv" : "tools/rpa_tasks.pending.csv";
+  }
+
+  async function onRefreshRpaTasks() {
+    setRpaLoading(true);
+    try {
+      const result = await refreshRpaTasks();
+      setRpaPendingCount(result.pending ?? null);
+      setRpaForm((prev) => ({ ...prev, tasks_csv: tasksCsvForScope(rpaSendScope) }));
+      await refreshRpa();
+      setRpaMessage(`刷新完成：总数 ${result.total}，成功 ${result.enriched}，未匹配/空 ${result.no_match_or_empty}，错误 ${result.errors}，待发送 ${result.pending ?? 0}`);
+    } catch (e: any) {
+      setRpaMessage(e.message);
+    } finally {
+      setRpaLoading(false);
+    }
+  }
+
+  async function onBackfillRpaState() {
+    if (!window.confirm("将根据旧的 results.csv 回填发送状态，仅补安全匹配的历史记录。是否继续？")) return;
+    setRpaLoading(true);
+    try {
+      const result = await backfillRpaState();
+      setRpaMessage(`补历史完成：匹配 ${result.matched}，未匹配 ${result.unmatched}，歧义 ${result.ambiguous}，台账总数 ${result.merged_total}`);
+      setRpaBackfillSummary(`历史台账：匹配 ${result.matched}，未匹配 ${result.unmatched}，歧义 ${result.ambiguous}，累计 ${result.merged_total}`);
+      setRpaForm((prev) => ({ ...prev, tasks_csv: tasksCsvForScope(rpaSendScope) }));
+    } catch (e: any) {
+      setRpaMessage(e.message);
+    } finally {
+      setRpaLoading(false);
+    }
+  }
+
+  async function onManualRefreshRpa() {
+    setRpaLoading(true);
+    try {
+      await refreshRpa();
+      setRpaMessage("状态已刷新");
+    } catch (e: any) {
+      setRpaMessage(e.message);
+    } finally {
+      setRpaLoading(false);
+    }
+  }
+
   async function onStartRpa() {
     if (!window.confirm(rpaForm.paste_only ? "当前是仅粘贴模式，确认开始？" : "当前是正式发送模式，确认开始？")) return;
     setRpaLoading(true);
@@ -313,6 +364,7 @@ export default function App() {
       setRpaLoading(false);
     }
   }
+
 
   function applyRpaPreset(preset: "fast" | "stable" | "strong") {
     if (preset === "fast") {
@@ -371,91 +423,134 @@ export default function App() {
 
       <div className="tabs">
         <button className={activeTab === "rpa" ? "tab active" : "tab"} onClick={() => setActiveTab("rpa")}>RPA 本机模式</button>
-        <button className={activeTab === "api" ? "tab active" : "tab"} onClick={() => setActiveTab("api")}>API 批量模式</button>
+              <button className={activeTab === "api" ? "tab active" : "tab"} onClick={() => setActiveTab("api")}>API 批量模式</button>
       </div>
 
       {activeTab === "rpa" && (
         <div className="grid">
-          <section className="card">
-            <h3>运行控制</h3>
+          <section className="card span-2 rpa-daily-card">
+            <h3>日常操作</h3>
+            <p className="section-intro">先补历史，再刷新发送任务，确认待发送数量后再开始运行。</p>
             <div className="toolbar">
+              <button type="button" onClick={onBackfillRpaState} disabled={rpaLoading}>
+                补历史发送状态
+              </button>
+              <button type="button" onClick={onRefreshRpaTasks} disabled={rpaLoading}>
+                刷新发送任务
+              </button>
               <button className="accent" onClick={onStartRpa} disabled={rpaLoading || rpaStatus.running}>开始运行</button>
               <button onClick={onStopRpa} disabled={rpaLoading || !rpaStatus.running}>停止运行</button>
-              <button onClick={() => refreshRpa()}>刷新状态</button>
-              <button onClick={() => navigator.clipboard.writeText(rpaCmdPreview)}>复制命令</button>
+              <button onClick={onManualRefreshRpa} disabled={rpaLoading}>刷新状态</button>
             </div>
-            <div className="status-grid">
-              <span>PID: {rpaStatus.pid ?? "-"}</span>
-              <span>开始: {rpaStatus.started_at ?? "-"}</span>
-              <span>结束: {rpaStatus.finished_at ?? "-"}</span>
-              <span>退出码: {rpaStatus.return_code ?? "-"}</span>
-              <span>sent: {rpaCounts.sent ?? 0}</span>
-              <span>pasted: {(rpaCounts.pasted_only ?? 0) + (rpaCounts.pasted_unverified ?? 0)}</span>
-              <span>pasted_unverified: {rpaCounts.pasted_unverified ?? 0}</span>
-              <span>failed: {rpaCounts.failed ?? 0}</span>
+            <div className="rpa-daily-metrics">
+              <div className="metric-pill">
+                <span className="metric-label">待发送</span>
+                <strong>{rpaPendingCount ?? "-"}</strong>
+              </div>
+              <div className="metric-pill">
+                <span className="metric-label">当前任务</span>
+                <strong>{rpaSendScope === "pending" ? "仅待发送任务" : "全部任务"}</strong>
+              </div>
+              <div className="metric-pill">
+                <span className="metric-label">运行状态</span>
+                <strong>{rpaStatus.running ? "运行中" : "空闲"}</strong>
+              </div>
+              <div className="metric-pill">
+                <span className="metric-label">已粘贴</span>
+                <strong>{(rpaCounts.pasted_only ?? 0) + (rpaCounts.pasted_unverified ?? 0)}</strong>
+              </div>
+              <div className="metric-pill">
+                <span className="metric-label">失败</span>
+                <strong>{rpaCounts.failed ?? 0}</strong>
+              </div>
             </div>
+            <div className="notice">{rpaBackfillSummary}</div>
             {rpaMessage && <div className="notice">{rpaMessage}</div>}
-            <pre className="cmd">{rpaCmdPreview}</pre>
           </section>
 
-          <section className="card">
-            <h3>参数配置</h3>
-            <div className="preset-row">
-              <span>预设</span>
-              <button onClick={() => applyRpaPreset("fast")}>快</button>
-              <button onClick={() => applyRpaPreset("stable")}>稳</button>
-              <button onClick={() => applyRpaPreset("strong")}>抗干扰</button>
+          <details className="card span-2 details-card">
+            <summary>高级设置</summary>
+            <div className="details-body">
+              <div className="preset-row">
+                <span>预设</span>
+                <button onClick={() => applyRpaPreset("fast")}>快</button>
+                <button onClick={() => applyRpaPreset("stable")}>稳</button>
+                <button onClick={() => applyRpaPreset("strong")}>抗干扰</button>
+                <button onClick={() => navigator.clipboard.writeText(rpaCmdPreview)}>复制命令</button>
+              </div>
+              <div className="status-grid">
+                <span>PID: {rpaStatus.pid ?? "-"}</span>
+                <span>开始: {rpaStatus.started_at ?? "-"}</span>
+                <span>结束: {rpaStatus.finished_at ?? "-"}</span>
+                <span>退出码: {rpaStatus.return_code ?? "-"}</span>
+                <span>sent: {rpaCounts.sent ?? 0}</span>
+                <span>pasted_unverified: {rpaCounts.pasted_unverified ?? 0}</span>
+                <span>results.csv: {rpaForm.results_csv}</span>
+                <span>log: {rpaForm.log_file}</span>
+              </div>
+              <div className="form-grid">
+                <label>任务 CSV</label>
+                <input value={rpaForm.tasks_csv} onChange={(e) => patchRpa("tasks_csv", e.target.value)} />
+                <label>发送范围</label>
+                <select
+                  value={rpaSendScope}
+                  onChange={(e) => {
+                    const scope = e.target.value as "pending" | "all";
+                    setRpaSendScope(scope);
+                    setRpaForm((prev) => ({ ...prev, tasks_csv: tasksCsvForScope(scope) }));
+                  }}
+                >
+                  <option value="pending">仅待发送任务</option>
+                  <option value="all">全部任务</option>
+                </select>
+                <label>WeCom EXE</label>
+                <input value={rpaForm.wecom_exe || ""} onChange={(e) => patchRpa("wecom_exe", e.target.value)} />
+                <label>标题正则</label>
+                <input value={rpaForm.main_title_re} onChange={(e) => patchRpa("main_title_re", e.target.value)} />
+                <label>发送模式</label>
+                <select value={rpaForm.send_mode} onChange={(e) => patchRpa("send_mode", e.target.value as RpaStartPayload["send_mode"])}>
+                  <option value="clipboard">clipboard</option>
+                  <option value="dialog">dialog</option>
+                  <option value="auto">auto</option>
+                </select>
+                <label>开会话策略</label>
+                <select value={rpaForm.open_chat_strategy} onChange={(e) => patchRpa("open_chat_strategy", e.target.value as RpaStartPayload["open_chat_strategy"])}>
+                  <option value="keyboard_first">keyboard_first</option>
+                  <option value="click_first">click_first</option>
+                  <option value="hybrid">hybrid</option>
+                </select>
+                <label>任务间隔秒</label>
+                <input type="number" value={rpaForm.interval_sec} onChange={(e) => patchRpa("interval_sec", Number(e.target.value))} />
+                <label>超时秒</label>
+                <input type="number" value={rpaForm.timeout_sec} onChange={(e) => patchRpa("timeout_sec", Number(e.target.value))} />
+                <label>重试次数</label>
+                <input type="number" value={rpaForm.max_retries} onChange={(e) => patchRpa("max_retries", Number(e.target.value))} />
+                <label>重试间隔</label>
+                <input type="number" step="0.1" value={rpaForm.retry_delay_sec} onChange={(e) => patchRpa("retry_delay_sec", Number(e.target.value))} />
+                <label>稳态轮次（开会话）</label>
+                <input type="number" value={rpaForm.stabilize_open_rounds} onChange={(e) => patchRpa("stabilize_open_rounds", Number(e.target.value))} />
+                <label>稳态轮次（聚焦）</label>
+                <input type="number" value={rpaForm.stabilize_focus_rounds} onChange={(e) => patchRpa("stabilize_focus_rounds", Number(e.target.value))} />
+                <label>稳态轮次（发送前）</label>
+                <input type="number" value={rpaForm.stabilize_send_rounds} onChange={(e) => patchRpa("stabilize_send_rounds", Number(e.target.value))} />
+                <label>从第几条开始</label>
+                <input type="number" value={rpaForm.resume_from} onChange={(e) => patchRpa("resume_from", Number(e.target.value))} />
+                <label>结果文件</label>
+                <input value={rpaForm.results_csv} onChange={(e) => patchRpa("results_csv", e.target.value)} />
+                <label>日志文件</label>
+                <input value={rpaForm.log_file} onChange={(e) => patchRpa("log_file", e.target.value)} />
+              </div>
+              <div className="toggle-grid">
+                <label><input type="checkbox" checked={rpaForm.paste_only} onChange={(e) => patchRpa("paste_only", e.target.checked)} /> 仅粘贴</label>
+                <label><input type="checkbox" checked={rpaForm.no_chat_verify} onChange={(e) => patchRpa("no_chat_verify", e.target.checked)} /> 关闭会话校验</label>
+                <label><input type="checkbox" checked={rpaForm.resume_failed} onChange={(e) => patchRpa("resume_failed", e.target.checked)} /> 只续跑失败项</label>
+                <label><input type="checkbox" checked={rpaForm.stop_on_fail} onChange={(e) => patchRpa("stop_on_fail", e.target.checked)} /> 失败即停</label>
+                <label><input type="checkbox" checked={rpaForm.skip_missing_image} onChange={(e) => patchRpa("skip_missing_image", e.target.checked)} /> 缺图跳过</label>
+                <label><input type="checkbox" checked={rpaForm.debug_chat_text} onChange={(e) => patchRpa("debug_chat_text", e.target.checked)} /> 调试会话文本</label>
+                <label><input type="checkbox" checked={rpaForm.dry_run} onChange={(e) => patchRpa("dry_run", e.target.checked)} /> Dry Run</label>
+              </div>
             </div>
-            <div className="form-grid">
-              <label>任务 CSV</label>
-              <input value={rpaForm.tasks_csv} onChange={(e) => patchRpa("tasks_csv", e.target.value)} />
-              <label>WeCom EXE</label>
-              <input value={rpaForm.wecom_exe || ""} onChange={(e) => patchRpa("wecom_exe", e.target.value)} />
-              <label>标题正则</label>
-              <input value={rpaForm.main_title_re} onChange={(e) => patchRpa("main_title_re", e.target.value)} />
-              <label>发送模式</label>
-              <select value={rpaForm.send_mode} onChange={(e) => patchRpa("send_mode", e.target.value as RpaStartPayload["send_mode"])}>
-                <option value="clipboard">clipboard</option>
-                <option value="dialog">dialog</option>
-                <option value="auto">auto</option>
-              </select>
-              <label>开会话策略</label>
-              <select value={rpaForm.open_chat_strategy} onChange={(e) => patchRpa("open_chat_strategy", e.target.value as RpaStartPayload["open_chat_strategy"])}>
-                <option value="keyboard_first">keyboard_first</option>
-                <option value="click_first">click_first</option>
-                <option value="hybrid">hybrid</option>
-              </select>
-              <label>任务间隔秒</label>
-              <input type="number" value={rpaForm.interval_sec} onChange={(e) => patchRpa("interval_sec", Number(e.target.value))} />
-              <label>超时秒</label>
-              <input type="number" value={rpaForm.timeout_sec} onChange={(e) => patchRpa("timeout_sec", Number(e.target.value))} />
-              <label>重试次数</label>
-              <input type="number" value={rpaForm.max_retries} onChange={(e) => patchRpa("max_retries", Number(e.target.value))} />
-              <label>重试间隔</label>
-              <input type="number" step="0.1" value={rpaForm.retry_delay_sec} onChange={(e) => patchRpa("retry_delay_sec", Number(e.target.value))} />
-              <label>稳态轮次(开会话)</label>
-              <input type="number" value={rpaForm.stabilize_open_rounds} onChange={(e) => patchRpa("stabilize_open_rounds", Number(e.target.value))} />
-              <label>稳态轮次(聚焦)</label>
-              <input type="number" value={rpaForm.stabilize_focus_rounds} onChange={(e) => patchRpa("stabilize_focus_rounds", Number(e.target.value))} />
-              <label>稳态轮次(发送前)</label>
-              <input type="number" value={rpaForm.stabilize_send_rounds} onChange={(e) => patchRpa("stabilize_send_rounds", Number(e.target.value))} />
-              <label>从第几条开始</label>
-              <input type="number" value={rpaForm.resume_from} onChange={(e) => patchRpa("resume_from", Number(e.target.value))} />
-              <label>结果文件</label>
-              <input value={rpaForm.results_csv} onChange={(e) => patchRpa("results_csv", e.target.value)} />
-              <label>日志文件</label>
-              <input value={rpaForm.log_file} onChange={(e) => patchRpa("log_file", e.target.value)} />
-            </div>
-            <div className="toggle-grid">
-              <label><input type="checkbox" checked={rpaForm.paste_only} onChange={(e) => patchRpa("paste_only", e.target.checked)} /> 仅粘贴</label>
-              <label><input type="checkbox" checked={rpaForm.no_chat_verify} onChange={(e) => patchRpa("no_chat_verify", e.target.checked)} /> 关闭会话校验</label>
-              <label><input type="checkbox" checked={rpaForm.resume_failed} onChange={(e) => patchRpa("resume_failed", e.target.checked)} /> 只续跑失败项</label>
-              <label><input type="checkbox" checked={rpaForm.stop_on_fail} onChange={(e) => patchRpa("stop_on_fail", e.target.checked)} /> 失败即停</label>
-              <label><input type="checkbox" checked={rpaForm.skip_missing_image} onChange={(e) => patchRpa("skip_missing_image", e.target.checked)} /> 缺图跳过</label>
-              <label><input type="checkbox" checked={rpaForm.debug_chat_text} onChange={(e) => patchRpa("debug_chat_text", e.target.checked)} /> 调试会话文本</label>
-              <label><input type="checkbox" checked={rpaForm.dry_run} onChange={(e) => patchRpa("dry_run", e.target.checked)} /> Dry Run</label>
-            </div>
-          </section>
+          </details>
 
           <section className="card span-2">
             <h3>实时日志</h3>
@@ -501,7 +596,7 @@ export default function App() {
               <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={config?.secret || ""} />
             </div>
             <div className="toolbar">
-              <button onClick={onCheckIp}>检测出口IP</button>
+              <button onClick={onCheckIp}>检测出口 IP</button>
               <span className="mono">{publicIp ?? "-"}</span>
             </div>
             <div className="toolbar">

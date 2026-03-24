@@ -27,6 +27,7 @@ from .worker import worker
 from .watch import watcher
 from .config import load_config, update_config
 from .rpa_runner import start_run as start_rpa_run, stop_run as stop_rpa_run, status as rpa_status, tail_log as rpa_tail_log
+from .rpa_refresh import run_refresh as run_rpa_refresh, run_backfill as run_rpa_backfill
 
 router = APIRouter()
 
@@ -157,3 +158,19 @@ def start_rpa(req: RpaStartRequest):
 @router.post("/rpa/stop")
 def stop_rpa():
     return stop_rpa_run()
+
+
+@router.post("/rpa/refresh-tasks")
+def refresh_rpa_tasks(score_api_base: str = "http://host.docker.internal:8010"):
+    result = run_rpa_refresh(score_api_base=score_api_base)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("stderr") or result.get("stdout") or "refresh tasks failed")
+    return result
+
+
+@router.post("/rpa/backfill-state")
+def backfill_rpa_state():
+    result = run_rpa_backfill()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("stderr") or result.get("stdout") or "backfill state failed")
+    return result
